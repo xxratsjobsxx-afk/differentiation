@@ -2602,359 +2602,749 @@ window.QF = QF;
 
 
 /* ==========================================================================
-   SHEETBANK — the questions modelled on Sheet 5 (Engineering Mathematics 1,
-   BAS 111: chain rule with hyperbolic / trig / log functions, and tangent
-   lines at a point).  Added on top of the original bank, which is kept.
+   SHEETBANK — questions modelled on Sheet 5 of Engineering Mathematics (1):
+   the chain rule with hyperbolic / trig / log functions, and tangent lines.
 
-   Everything generated here is checked numerically before it is allowed in:
-   the stated derivative is compared with a central difference of the actual
-   function, and every distractor must differ from the correct answer.
+   Every answer here is built as an *expression tree*: the same object prints
+   the maths you see and computes the number used to check it.  A string can
+   therefore never disagree with its own value — the bug that used to lose a
+   minus sign when the inner function was cos 2x or 1/x cannot happen.
+
+   Each item is checked before it is allowed in:
+     · the right answer must match a central difference of the real function
+     · every wrong option must be a genuinely different function
    ========================================================================== */
 (function () {
   'use strict';
   const M = Math;
   const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
-  const pw = n => (n >= 0 && n <= 9) ? SUP[n] : '<sup>' + n + '</sup>';
-  const X = '<i>x</i>';
+  const sup = n => (n >= 0 && n <= 9) ? SUP[n] : '<sup>' + n + '</sup>';
+  const XI = '<i>x</i>';
   const num = v => String(v).replace('-', '−');
-  const powSup = n => (n >= 0 && n <= 9) ? '⁰¹²³⁴⁵⁶⁷⁸⁹'[n] : '<sup>' + n + '</sup>';
-  const wrap = s => (/[+−]/.test(s) && s.indexOf('(') !== 0) ? '(' + s + ')' : s;
   const SAMPLES = [0.45, 0.7, 0.95, 1.25, 1.6, 2.1, 2.9];
-  const h = 1e-5;
-
-  function central(f, x) { return (f(x + h) - f(x - h)) / (2 * h); }
-  function sameish(a, b) { return Math.abs(a - b) <= 1e-3 * Math.max(1, Math.abs(a), Math.abs(b)); }
-
-  /* is a claimed derivative numerically the derivative of f? */
-  function verify(f, ans) {
-    let checked = 0;
-    for (const x of SAMPLES) {
-      const y = f(x), d = central(f, x), a = ans(x);
-      if (!isFinite(y) || !isFinite(d) || !isFinite(a)) continue;
-      if (Math.abs(y) > 1e6 || Math.abs(d) > 1e6) continue;
-      if (!sameish(d, a)) return false;
-      checked++;
-    }
-    return checked >= 3;
-  }
-  /* is an option clearly a different function from the right answer? */
-  function distinct(f, ans, wrong) {
-    let diff = 0;
-    for (const x of SAMPLES) {
-      const a = ans(x), b = wrong(x);
-      if (!isFinite(a) || !isFinite(b)) continue;
-      if (Math.abs(a - b) > 1e-2 * Math.max(1, Math.abs(a))) diff++;
-    }
-    return diff >= 2;
+  /* a central difference that refuses to guess: two step sizes must agree,
+     otherwise the point is too rough to judge and we skip it */
+  function central(f, x) {
+    const d1 = (f(x + 1e-4) - f(x - 1e-4)) / 2e-4;
+    const d2 = (f(x + 2e-5) - f(x - 2e-5)) / 4e-5;
+    if (!isFinite(d1) || !isFinite(d2)) return NaN;
+    if (Math.abs(d1 - d2) > 1e-3 * Math.max(1, Math.abs(d1))) return NaN;   /* unstable */
+    return d2;
   }
 
-  /* ---------------------------------------------------------- inner pieces */
-  const INNER = [
-    { id: 'lin',   s: '2<i>x</i> + 1',            n: x => 2 * x + 1,   ds: '2',                              dn: () => 2 },
-    { id: 'lin3',  s: '3<i>x</i> − 5',            n: x => 3 * x - 5,   ds: '3',                              dn: () => 3 },
-    { id: 'quad',  s: '3<i>x</i>² − 5<i>x</i> + 1', n: x => 3 * x * x - 5 * x + 1, ds: '6<i>x</i> − 5',    dn: x => 6 * x - 5 },
-    { id: 'sq',    s: '<i>x</i>²',                n: x => x * x,       ds: '2<i>x</i>',                      dn: x => 2 * x },
-    { id: 'rtx',   s: '&radic;<i>x</i>',          n: x => M.sqrt(x),   ds: '1/(2&radic;<i>x</i>)',           dn: x => 1 / (2 * M.sqrt(x)) },
-    { id: 'sinx',  s: 'sin <i>x</i>',             n: x => M.sin(x),    ds: 'cos <i>x</i>',                   dn: x => M.cos(x) },
-    { id: 'sin3',  s: 'sin 3<i>x</i>',            n: x => M.sin(3 * x), ds: '3 cos 3<i>x</i>',               dn: x => 3 * M.cos(3 * x) },
-    { id: 'cos2',  s: 'cos 2<i>x</i>',            n: x => M.cos(2 * x), ds: '−2 sin 2<i>x</i>',               dn: x => -2 * M.sin(2 * x) },
-    { id: 'secx2', s: 'sec <i>x</i>²',            n: x => 1 / M.cos(x * x), ds: '2<i>x</i> sec <i>x</i>² tan <i>x</i>²',
-                                                                          dn: x => 2 * x / M.cos(x * x) * M.tan(x * x) },
-    { id: 'tanh2', s: 'tanh(2<i>x</i> + 1)',      n: x => M.tanh(2 * x + 1), ds: '2 sech²(2<i>x</i> + 1)',
-                                                                          dn: x => 2 / Math.pow(M.cosh(2 * x + 1), 2) },
-    { id: 'sinh3', s: 'sinh 3<i>x</i>',           n: x => M.sinh(3 * x), ds: '3 cosh 3<i>x</i>',              dn: x => 3 * M.cosh(3 * x) },
-    { id: 'coshx', s: 'cosh <i>x</i>',            n: x => M.cosh(x),    ds: 'sinh <i>x</i>',                  dn: x => M.sinh(x) },
-    { id: 'ln2x',  s: 'ln 2<i>x</i>',             n: x => M.log(2 * x), ds: '1/<i>x</i>',                      dn: x => 1 / x },
-    { id: 'exp2',  s: 'e<sup>2<i>x</i></sup>',    n: x => M.exp(2 * x), ds: '2e<sup>2<i>x</i></sup>',          dn: x => 2 * M.exp(2 * x) },
-    { id: 'inv',   s: '1/<i>x</i>',               n: x => 1 / x,        ds: '−1/<i>x</i>²',                   dn: x => -1 / (x * x) },
-    { id: 'cube',  s: '<i>x</i>³ + <i>x</i>',     n: x => x * x * x + x, ds: '3<i>x</i>² + 1',               dn: x => 3 * x * x + 1 }
-  ];
+  /* ------------------------------------------------------- expression trees */
+  const precOf = n => n.k === 'a' || n.k === 's' ? 1 : (n.k === 'm' || n.k === 'd' || n.k === 'g') ? 2 : 3;
 
-  /* --------------------------------------------------- outer families (k) */
-  const OUT = {
-    sin:  { FN: M.sin,        CO: x => M.cos(x),      co: 'cos',  sign: +1, kind: 'co' },
-    cos:  { FN: M.cos,        CO: x => -M.sin(x),     co: 'sin',  sign: -1, kind: 'co' },
-    tan:  { FN: x => M.tan(x), SEC: x => 1 / Math.pow(M.cos(x), 2), sec: 'sec²', sign: +1, kind: 'sec2' },
-    cot:  { FN: x => 1 / M.tan(x), SEC: x => 1 / Math.pow(M.sin(x), 2), sec: 'csc²', sign: -1, kind: 'sec2' },
-    sinh: { FN: M.sinh,       CO: x => M.cosh(x),     co: 'cosh', sign: +1, kind: 'co' },
-    cosh: { FN: M.cosh,       CO: x => M.sinh(x),     co: 'sinh', sign: +1, kind: 'co' },
-    tanh: { FN: M.tanh,       SEC: x => 1 / Math.pow(M.cosh(x), 2), sec: 'sech²', sign: +1, kind: 'sec2' },
-    coth: { FN: x => 1 / M.tanh(x), SEC: x => 1 / Math.pow(M.sinh(x), 2), sec: 'csch²', sign: -1, kind: 'sec2' },
-    sec:  { FN: x => 1 / M.cos(x),  MUL: x => M.tan(x), SIGN: +1, mul: 'tan',  kind: 'self' },
-    csc:  { FN: x => 1 / M.sin(x),  MUL: x => 1 / M.tan(x), SIGN: -1, mul: 'cot', kind: 'self' },
-    sech: { FN: x => 1 / M.cosh(x), MUL: x => M.tanh(x), SIGN: -1, mul: 'tanh', kind: 'self' },
-    csch: { FN: x => 1 / M.sinh(x), MUL: x => 1 / M.tanh(x), SIGN: -1, mul: 'coth', kind: 'self' }
+  function clean(v) {
+    if (!isFinite(v)) return '—';
+    const r = Math.round(v * 1e6) / 1e6;
+    if (Math.abs(v - Math.round(v)) < 1e-9) return num(Math.round(v));
+    for (let q = 2; q <= 12; q++) {                       /* 2/3, 1/4, 5/6 … */
+      const pv = v * q;
+      if (Math.abs(pv - Math.round(pv)) < 1e-9) {
+        const pp = Math.round(pv);
+        const g = (function gcd(a, b) { return b ? gcd(b, a % b) : a; })(Math.abs(pp), q);
+        const up = pp / g, dn = q / g;
+        return dn === 1 ? num(up) : '(' + num(up) + '/' + dn + ')';
+      }
+    }
+    return num(Math.round(r * 1000) / 1000);
+  }
+
+  function str(n, min) {
+    const p = precOf(n);
+    const s = raw(n);
+    return p < (min || 0) ? '(' + s + ')' : s;
+  }
+
+  /* ---- products and quotients render as one fraction, powers merged ---- */
+  const key = n => str(n);
+  const powerBase = n => n.k === 'p' && (n.a.k === 'x' || n.a.k === 'f') ? n.a : n;
+  const powerExp = n => n.k === 'p' && (n.a.k === 'x' || n.a.k === 'f') ? n.n : 1;
+
+  function collect(n, acc, inv) {
+    switch (n.k) {
+      case 'n': acc.coef *= (inv ? 1 / n.v : n.v); break;
+      case 'g': acc.coef *= -1; collect(n.a, acc, inv); break;   /* the sign belongs to the whole term */
+      case 'm': n.f.forEach(f => collect(f, acc, inv)); break;
+      case 'd': collect(n.a, acc, inv); collect(n.b, acc, !inv); break;
+      case 'p': {
+        let b = n.a, e = n.n;
+        if (b.k === 'p') { e *= b.n; b = b.a; }
+        if (b.k === 'f' && b.name === 'sqr' && e % 2 === 0) { b = b.arg; e = e / 2; }
+        if (b.k === 'f' && b.name === 'cbr' && e % 3 === 0) { b = b.arg; e = e / 3; }
+        const exp = e * (inv ? -1 : 1);
+        if (exp > 0) acc.num.push({ base: b, exp: exp });
+        else acc.den.push({ base: b, exp: -exp });
+        break;
+      }
+      default: {
+        if (inv) acc.den.push({ base: n, exp: 1 });
+        else acc.num.push({ base: n, exp: 1 });
+      }
+    }
+  }
+  function mergeFactors(list) {
+    const out = [];
+    list.forEach(f => {
+      const k2 = key(f.base);
+      for (let i = 0; i < out.length; i++) if (key(out[i].base) === k2) { out[i].exp += f.exp; return; }
+      out.push({ base: f.base, exp: f.exp });
+    });
+    return out.filter(f => f.exp !== 0);
+  }
+  function facStr(f) {
+    const b = f.base;
+    if (f.exp === 1) return str(b, 3);
+    if (b.k === 'f' && (b.name === 'sqr' || b.name === 'cbr')) return rawsafe(b) + sup(f.exp);
+    if (b.k === 'f') return rawsafe(b).replace(/\(/, sup(f.exp) + '(');
+    if (b.k === 'x') return XI + sup(f.exp);
+    return '(' + str(b) + ')' + sup(f.exp);
+  }
+  const rawsafe = b => b.name === 'sqr' ? '&radic;(' + str(b.arg) + ')'
+                     : b.name === 'cbr' ? '&#8731;(' + str(b.arg) + ')'
+                     : b.name === 'exp' ? 'e<sup>' + str(b.arg) + '</sup>'
+                     : b.name === 'sec2' ? 'sec²(' + str(b.arg) + ')'
+                     : b.name === 'csc2' ? 'csc²(' + str(b.arg) + ')'
+                     : b.name === 'sech2' ? 'sech²(' + str(b.arg) + ')'
+                     : b.name === 'csch2' ? 'csch²(' + str(b.arg) + ')'
+                     : b.name === 'log3' ? 'log<sub>3</sub>(' + str(b.arg) + ')'
+                     : b.name === 'log2' ? 'log<sub>2</sub>(' + str(b.arg) + ')'
+                     : b.name + '(' + str(b.arg) + ')';
+  function termStr(n) {
+    const acc = { coef: 1, num: [], den: [] };
+    collect(n, acc, false);
+    const num = mergeFactors(acc.num), den = mergeFactors(acc.den);
+    const c = acc.coef;
+    const frac = c === 0 ? '0' : clean(Math.abs(c));
+    const neg2 = c < 0;
+    const hideCoef = Math.abs(Math.abs(c) - 1) < 1e-12 && num.length > 0;
+    let s2 = (neg2 ? '−' : '') + (hideCoef ? '' : frac);
+    if (!hideCoef && num.length) s2 += '·';
+    if (num.length) s2 += num.map(facStr).join('·');
+    if (den.length) {
+      const d = den.map(facStr);
+      s2 += '/' + (d.length > 1 ? '(' + d.join('·') + ')' : d[0]);
+    }
+    return s2;
+  }
+
+  function raw(n) {
+    switch (n.k) {
+      case 'n': return clean(n.v);
+      case 'c': return n.label;
+      case 'x': return XI;
+      case 'f': return n.name === 'exp' ? 'e<sup>' + str(n.arg) + '</sup>'
+                    : n.name === 'log3' ? 'log<sub>3</sub>(' + str(n.arg) + ')'
+                    : n.name === 'log2' ? 'log<sub>2</sub>(' + str(n.arg) + ')'
+                    : n.name === 'sqr' ? '&radic;(' + str(n.arg) + ')'
+                    : n.name === 'cbr' ? '&#8731;(' + str(n.arg) + ')'
+                    : n.name === 'sec2' ? 'sec²(' + str(n.arg) + ')'
+                    : n.name === 'csc2' ? 'csc²(' + str(n.arg) + ')'
+                    : n.name === 'sech2' ? 'sech²(' + str(n.arg) + ')'
+                    : n.name === 'csch2' ? 'csch²(' + str(n.arg) + ')'
+                    : n.name + '(' + str(n.arg) + ')';
+      case 'p': {
+        const b = n.a;
+        if (b.k === 'f' && b.name === 'cbr' && n.n === 2) return '&#8731;(' + str(b.arg) + '²)';
+        if (b.k === 'f' && b.name === 'sqr' && n.n === 2) return '(&radic;(' + str(b.arg) + '))²';
+        if (b.k === 'f') return raw(b).replace(/\(/, sup(n.n) + '(');
+        if (b.k === 'x') return XI + sup(n.n);
+        return '(' + raw(b) + ')' + sup(n.n);
+      }
+      case 'g':
+      case 'm':
+      case 'd': return termStr(n);
+      case 'a':
+      case 's': {
+        const terms = [];
+        const walk = (m, sg) => {
+          if (m.k === 'a') { walk(m.a, sg); walk(m.b, 1); }
+          else if (m.k === 's') { walk(m.a, sg); walk(m.b, -1); }
+          else if (m.k === 'g') walk(m.a, -sg);
+          else terms.push([sg, m]);
+        };
+        walk(n, 1);
+        return terms.map((t, i) => {
+          const body = str(t[1], 1.5);
+          if (i === 0) return t[0] < 0 ? '−' + body : body;
+          return t[0] < 0 ? ' − ' + body : ' + ' + body;
+        }).join('');
+      }
+      default: return '?';
+    }
+  }
+
+  function ev(n, x) {
+    switch (n.k) {
+      case 'n': return n.v;
+      case 'c': return n.v;
+      case 'x': return x;
+      case 'f': return FN[n.name].v(ev(n.arg, x));
+      case 'p': { const b = ev(n.a, x); return n.n === 2 ? b * b : Math.pow(b, n.n); }
+      case 'g': return -ev(n.a, x);
+      case 'm': { let p = 1; for (let i = 0; i < n.f.length; i++) p *= ev(n.f[i], x); return p; }
+      case 'd': return ev(n.a, x) / ev(n.b, x);
+      case 'a': return ev(n.a, x) + ev(n.b, x);
+      case 's': return ev(n.a, x) - ev(n.b, x);
+      default: return NaN;
+    }
+  }
+
+  /* --------------------------------------------------------------- builders */
+  const N = v => ({ k: 'n', v: v });
+  const XX = () => ({ k: 'x' });
+  const CONST = (label, v) => ({ k: 'c', label: label, v: v });     /* e.g. ln 3 — exact, never rounded */
+  const LN3 = CONST('ln 3', Math.log(3));
+  const LN2 = CONST('ln 2', Math.log(2));
+  const F = (name, arg) => ({ k: 'f', name: name, arg: arg });
+  const P = (a, n) => n === 1 ? a
+    : (a.k === 'f' && a.name === 'sqr' && n === 2) ? a.arg     /* (√u)² = u */
+    : ({ k: 'p', a: a, n: n });
+
+  function site(n) {                                   /* sign and magnitude of a node */
+    if (n.k === 'n') return n.v < 0 ? [-1, N(-n.v)] : [1, n];
+    if (n.k === 'g') return [-1, n.a];
+    return [1, n];
+  }
+  function MUL() {
+    const flat = [];
+    const walk = n => { if (n.k === 'm') n.f.forEach(walk); else flat.push(n); };
+    for (let i = 0; i < arguments.length; i++) walk(arguments[i]);
+    let coef = 1, sign = 1;
+    const keep = [];
+    flat.forEach(f => {
+      const sg = site(f);
+      sign *= sg[0];
+      const g = sg[1];
+      if (g.k === 'n') { coef *= g.v; return; }
+      keep.push(g);
+    });
+    if (Math.abs(coef) < 1e-12) return N(0);
+    sign *= coef < 0 ? -1 : 1;
+    coef = Math.abs(coef);
+    if (!keep.length) return N(sign * coef);
+
+    /* same base twice becomes a power: sech²·sech = sech³, x²·x = x³ */
+    const baseOf = n => n.k === 'p' ? n.a : n;
+    const powOf = n => n.k === 'p' ? n.n : 1;
+    const grouped = [];
+    keep.forEach(kf => {
+      const b = baseOf(kf), pw = powOf(kf);
+      for (let i = 0; i < grouped.length; i++) {
+        const g = grouped[i];
+        if (g.base.k === b.k && g.base.k === 'f' && g.base.name === b.name && str(g.base.arg) === str(b.arg)) { g.n += pw; return; }
+        if (g.base.k === 'x' && b.k === 'x') { g.n += pw; return; }
+      }
+      grouped.push({ base: b, n: pw });
+    });
+    let merged = grouped.map(g => (g.base.k === 'x' || g.base.k === 'f') ? P(g.base, g.n) : g.base);
+
+    /* a division among the factors becomes one clean fraction */
+    const mraw = list => !list.length ? N(1) : list.length === 1 ? list[0] : { k: 'm', f: list };
+    const divs = merged.filter(f => f.k === 'd');
+    if (divs.length) {
+      const rest = merged.filter(f => f.k !== 'd');
+      let acc = mraw(coef === 1 ? rest : [N(coef)].concat(rest));
+      divs.forEach(dv => { acc = { k: 'd', a: mraw([acc, dv.a]), b: dv.b }; });
+      return sign < 0 ? { k: 'g', a: acc } : acc;
+    }
+
+    let out;
+    if (merged.length === 1) out = coef === 1 ? merged[0] : { k: 'm', f: [N(coef), merged[0]] };
+    else out = { k: 'm', f: coef === 1 ? merged : [N(coef)].concat(merged) };
+    return sign < 0 ? { k: 'g', a: out } : out;
+  }
+  function ADD(a, b) {
+    const sb = site(b);
+    if (sb[0] < 0) return SUB(a, sb[1]);
+    if (a.k === 'n' && a.v === 0) return b;
+    if (b.k === 'n' && b.v === 0) return a;
+    if (a.k === 'n' && b.k === 'n') return N(a.v + b.v);
+    return { k: 'a', a: a, b: b };
+  }
+  function SUB(a, b) {
+    const sb = site(b);
+    if (sb[0] < 0) return ADD(a, sb[1]);
+    if (b.k === 'n' && b.v === 0) return a;
+    if (a.k === 'n' && a.v === 0) return { k: 'g', a: b };
+    if (a.k === 'n' && b.k === 'n') return N(a.v - b.v);
+    return { k: 's', a: a, b: b };
+  }
+  function DIV(a, b) {
+    const sa = site(a);
+    if (sa[0] < 0) { const r = DIV(sa[1], b); return { k: 'g', a: r }; }
+    if (a.k === 'n' && a.v === 0) return N(0);
+    if (b.k === 'n' && b.v === 1) return a;
+    if (b.k === 'n' && b.v === -1) return { k: 'g', a: a };
+    if (a.k === 'n' && b.k === 'n') return N(a.v / b.v);
+    /* 2 over 2x is 1 over x — fold the numbers, no recursion */
+    const an = numFac(a), bn = numFac(b);
+    if ((an[0] !== 1 || bn[0] !== 1) && bn[1]) {
+      const c = an[0] / bn[0];
+      const A = an[1] || N(1), B = bn[1];
+      if (!(A.k === 'n' && B && str(A) === str(B))) {
+        let top;
+        if (A.k === 'n') top = N(A.v * c);
+        else if (c === 1) top = A;
+        else top = { k: 'm', f: [N(c)].concat(A.k === 'm' ? A.f : [A]) };
+        return { k: 'd', a: top, b: B };
+      }
+    }
+    return { k: 'd', a: a, b: b };
+  }
+  const neg = a => site(a)[0] < 0 ? site(a)[1] : { k: 'g', a: a };
+  /* split a node into its numeric factor and the rest */
+  function numFac(n) {
+    if (n.k === 'n') return [n.v, null];
+    if (n.k === 'm') {
+      let c = 1; const rest = [];
+      n.f.forEach(f => { if (f.k === 'n') c *= f.v; else rest.push(f); });
+      if (rest.length === 0) return [c, null];
+      if (rest.length === 1) return [c, rest[0]];
+      return [c, { k: 'm', f: rest }];
+    }
+    return [1, n];
+  }
+
+  /* ------------------------------------------------------------- the rules */
+  const FN = {
+    sin:  { v: M.sin,        d: (u, ud) => MUL(F('cos', u), ud) },
+    cos:  { v: M.cos,        d: (u, ud) => neg(MUL(F('sin', u), ud)) },
+    tan:  { v: x => M.tan(x), d: (u, ud) => MUL(F('sec2', u), ud) },
+    cot:  { v: x => 1 / M.tan(x), d: (u, ud) => neg(MUL(F('csc2', u), ud)) },
+    sec:  { v: x => 1 / M.cos(x), d: (u, ud) => MUL(F('sec', u), F('tan', u), ud) },
+    csc:  { v: x => 1 / M.sin(x), d: (u, ud) => neg(MUL(F('csc', u), F('cot', u), ud)) },
+    sinh: { v: M.sinh,       d: (u, ud) => MUL(F('cosh', u), ud) },
+    cosh: { v: M.cosh,       d: (u, ud) => MUL(F('sinh', u), ud) },
+    tanh: { v: M.tanh,       d: (u, ud) => MUL(F('sech2', u), ud) },
+    coth: { v: x => 1 / M.tanh(x), d: (u, ud) => neg(MUL(F('csch2', u), ud)) },
+    sech: { v: x => 1 / M.cosh(x), d: (u, ud) => neg(MUL(F('sech', u), F('tanh', u), ud)) },
+    csch: { v: x => 1 / M.sinh(x), d: (u, ud) => neg(MUL(F('csch', u), F('coth', u), ud)) },
+    exp:  { v: M.exp,        d: (u, ud) => MUL(F('exp', u), ud) },
+    ln:   { v: M.log,        d: (u, ud) => DIV(ud, u) },
+    log3: { v: x => M.log(x) / M.log(3), d: (u, ud) => DIV(ud, MUL(u, LN3)) },
+    log2: { v: x => M.log(x) / M.log(2), d: (u, ud) => DIV(ud, MUL(u, LN2)) },
+    sqr:  { v: M.sqrt,       d: (u, ud) => DIV(ud, MUL(N(2), F('sqr', u))) },
+    cbr:  { v: Math.cbrt,    d: (u, ud) => DIV(ud, MUL(N(3), P(F('cbr', u), 2))) },
+    sec2: { v: x => 1 / Math.pow(M.cos(x), 2), d: (u, ud) => MUL(N(2), F('sec2', u), F('tan', u), ud) },
+    csc2: { v: x => 1 / Math.pow(M.sin(x), 2), d: (u, ud) => neg(MUL(N(2), F('csc2', u), F('cot', u), ud)) },
+    sech2: { v: x => 1 / Math.pow(M.cosh(x), 2), d: (u, ud) => neg(MUL(N(2), F('sech2', u), F('tanh', u), ud)) },
+    csch2: { v: x => 1 / Math.pow(M.sinh(x), 2), d: (u, ud) => neg(MUL(N(2), F('csch2', u), F('coth', u), ud)) }
   };
 
-  /* ---------------------------------------------------------------- helpers */
-  const isConstD = d => /^[−-]?\d+$/.test(d);
-  /* the inner derivative may itself carry a minus (1/x, cos 2x, …): pull it out */
-  const pullSign = d => d.charAt(0) === '−' ? { s: d.slice(1), sign: -1 } : { s: d, sign: 1 };
-  const constOf  = d => Number(d.replace('−', '-'));
-  /* coef·f1·f2·…, with the sign in front and a bare 1 hidden */
-  function assemble(coef, factors) {
-    const f = factors.filter(Boolean);
-    let out = '';
-    if (coef < 0) out += '−';
-    const a = Math.abs(coef);
-    if (a !== 1 || !f.length) out += String(a).replace('-', '−');
-    if (a !== 1 && f.length) out += '·';
-    return out + f.join('·');
+  /* derivative, with knobs for the classic mistakes ----------------------- */
+  function der(n, mode) {
+    mode = mode || {};
+    switch (n.k) {
+      case 'n': return N(0);
+      case 'x': return N(1);
+      case 'g': return neg(der(n.a, mode));
+      case 'f': {
+        let ud = mode.noChain ? N(1) : der(n.arg, mode);
+        if (mode.double) ud = MUL(N(2), ud);
+        return FN[n.name].d(n.arg, ud);
+      }
+      case 'p': {
+        const k = n.n + (mode.powerOff || 0);
+        return MUL(N(n.n), P(n.a, Math.max(0, k - 1)), der(n.a, mode));
+      }
+      case 'm': {
+        let out = null;
+        for (let i = 0; i < n.f.length; i++) {
+          const rest = n.f.filter((_, j) => j !== i);
+          const term = MUL(der(n.f[i], mode), MUL.apply(null, rest.length ? rest : [N(1)]));
+          out = out ? ADD(out, term) : term;
+        }
+        return out || N(0);
+      }
+      case 'a': return ADD(der(n.a, mode), der(n.b, mode));
+      case 's': return SUB(der(n.a, mode), der(n.b, mode));
+      case 'd': return SUB(DIV(der(n.a, mode), n.b), DIV(MUL(n.a, der(n.b, mode)), P(n.b, 2)));
+      default: return N(0);
+    }
   }
 
-  /* build one composition  name^k(u)  with its derivative and 3 variants */
-  function compose(name, k, u) {
-    const o = OUT[name];
-    const uS = u.s, un = u.n, udn = u.dn;
-    const ps = pullSign(u.ds), uds = ps.s;
-    const konst = isConstD(uds) ? constOf(uds) * ps.sign : null;
-    const innerFactor = konst === null ? [wrap(uds)] : [];
-    const fs = name + (k > 1 ? pw(k) : '') + '(' + uS + ')';
-    const fn = x => Math.pow(o.FN(un(x)), k);
-    let coef, factors, an, outerDesc;
-
-    if (o.kind === 'co') {
-      coef = o.sign * (k > 1 ? k : 1) * (konst === null ? 1 : konst);
-      factors = [k > 2 ? name + pw(k - 1) + '(' + uS + ')' : name + '(' + uS + ')', o.co + '(' + uS + ')'].concat(innerFactor);
-      an = x => coef * Math.pow(o.FN(un(x)), k - 1) * o.CO(un(x)) * udn(x) / (konst === null ? 1 : konst) * (konst === null ? 1 : konst);
-      outerDesc = name + (k > 1 ? pw(k) : '');
-    } else if (o.kind === 'sec2') {
-      coef = o.sign * (k > 1 ? k : 1) * (konst === null ? 1 : konst);
-      factors = [k > 2 ? name + pw(k - 1) + '(' + uS + ')' : name + '(' + uS + ')', o.sec + '(' + uS + ')'].concat(innerFactor);
-      an = x => coef * Math.pow(o.FN(un(x)), k - 1) * o.SEC(un(x)) * udn(x) / (konst === null ? 1 : konst) * (konst === null ? 1 : konst);
-      outerDesc = name + (k > 1 ? pw(k) : '');
-    } else {
-      coef = o.SIGN * k * (konst === null ? 1 : konst);
-      factors = [name + pw(k) + '(' + uS + ')', o.mul + '(' + uS + ')'].concat(innerFactor);
-      an = x => coef * Math.pow(o.FN(un(x)), k) * o.MUL(un(x)) * udn(x) / (konst === null ? 1 : konst) * (konst === null ? 1 : konst);
-      outerDesc = name + pw(k);
+  /* ------------------------------------------------------------- checking */
+  function verify(f, ansStr, ansNum) {
+    let ok = 0;
+    for (let i = 0; i < SAMPLES.length; i++) {
+      const x = SAMPLES[i], d = central(f, x), a = ansNum(x);
+      if (!isFinite(d) || !isFinite(a) || Math.abs(d) > 1e5 || Math.abs(a) > 1e5) continue;
+      if (Math.abs(d - a) > 1e-4 * Math.max(1, Math.abs(a))) return false;
+      ok++;
     }
-    return { fs, fn, as: assemble(coef, factors), an, outerDesc, coef, factors, o };
+    return ok >= 3;
+  }
+  function distinct(ans, wrong) {
+    let n = 0;
+    for (let i = 0; i < SAMPLES.length; i++) {
+      const a = ans(SAMPLES[i]), b = wrong(SAMPLES[i]);
+      if (!isFinite(a) || !isFinite(b)) continue;
+      if (Math.abs(a - b) > 1e-3 * Math.max(1, Math.abs(a))) n++;
+    }
+    return n >= 2;
+  }
+  /* the string and the number must agree — the guard against the old bug */
+  function selfConsistent(node) {
+    return typeof str(node) === 'string' && isFinite(ev(node, 1.3));
   }
 
-  /* ------------------------------------------------------- distractor forms */
-  function variants(name, k, u, base) {
-    const o = OUT[name], out = [], uS = u.s, un = u.n, udn = u.dn;
-    const konst = isConstD(u.ds) ? constOf(u.ds) : null;
-    const innerFactor = konst === null ? [wrap(u.ds)] : [];
-    const push = (s, n) => { if (s && s !== base.as) out.push({ s, n }); };
+  /* ------------------------------------------------------------------ audit
+     Read the printed answer back as maths and evaluate it.  If the picture on
+     screen and the number behind it ever disagree — a lost sign, a missing
+     factor — the question is thrown away instead of being asked.
+     ------------------------------------------------------------------ */
+  const PLAIN = { sec2: Math.pow, csc2: Math.pow, sech2: Math.pow, csch2: Math.pow };
+  function toPlain(html) {
+    return html
+      .replace(/<span class="qp-src">[\s\S]*?<\/span>/g, '')
+      .replace(/<i>x<\/i>/g, 'x')
+      .replace(/&radic;/g, 'sqrt').replace(/&#8731;/g, 'cbrt')
+      .replace(/&minus;/g, '-')
+      .replace(/−/g, '-')
+      .replace(/<sub>3<\/sub>/g, '3').replace(/<sub>2<\/sub>/g, '2')
+      .replace(/e<sup>([\s\S]*?)<\/sup>/g, function (m, inner) { return 'exp(' + toPlain(inner) + ')'; })
+      .replace(/<sup>([\s\S]*?)<\/sup>/g, function (m, inner) { return '^(' + toPlain(inner) + ')'; })
+      .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g, function (m) { return '^' + m.split('').map(ch => '⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(ch)).join(''); })
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^y = /, '');
+  }
+  const FNMAP = {
+    sin: Math.sin, cos: Math.cos, tan: Math.tan, cot: x => 1 / Math.tan(x),
+    sec: x => 1 / Math.cos(x), csc: x => 1 / Math.sin(x),
+    sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, coth: x => 1 / Math.tanh(x),
+    sech: x => 1 / Math.cosh(x), csch: x => 1 / Math.sinh(x),
+    sec2s: x => 1 / Math.pow(Math.cos(x), 2), csc2s: x => 1 / Math.pow(Math.sin(x), 2),
+    sech2s: x => 1 / Math.pow(Math.cosh(x), 2), csch2s: x => 1 / Math.pow(Math.sinh(x), 2),
+    exp: Math.exp, ln: Math.log, log3: x => Math.log(x) / Math.log(3), log2: x => Math.log(x) / Math.log(2),
+    sqrt: Math.sqrt, cbrt: Math.cbrt
+  };
+  const NAMES = ['sinh', 'cosh', 'tanh', 'coth', 'sech', 'csch', 'sec2s', 'csc2s', 'sech2s', 'csch2s',
+                 'log3', 'log2', 'sqrt', 'cbrt', 'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'exp', 'ln'];
 
-    if (o.kind === 'co' || o.kind === 'sec2') {
-      const mid = o.kind === 'co' ? o.co : o.sec;
-      const sib = o.kind === 'co' ? o.CO : o.SEC;
-      const kk = k > 1 ? k : 1;
-      const kc = konst === null ? 1 : konst;
-      /* forgot the chain factor altogether */
-      push(assemble(o.sign * kk, [k > 2 ? name + pw(k - 1) + '(' + uS + ')' : name + '(' + uS + ')', mid + '(' + uS + ')']),
-        x => o.sign * kk * Math.pow(o.FN(un(x)), k - 1) * sib(un(x)));
-      /* never dropped the power */
-      push(assemble(o.sign * kk * kc, [name + pw(k) + '(' + uS + ')', mid + '(' + uS + ')'].concat(innerFactor)),
-        x => o.sign * kk * Math.pow(o.FN(un(x)), k) * sib(un(x)) * udn(x));
-      /* sign slip on the outside */
-      push(assemble(-base.coef, base.factors), x => -base.an(x));
-      /* inner drawn out twice */
-      push(assemble(o.sign * kk * kc * 2, [k > 2 ? name + pw(k - 1) + '(' + uS + ')' : name + '(' + uS + ')', mid + '(' + uS + ')'].concat(innerFactor)),
-        x => 2 * base.an(x));
-    } else {
-      const kc = konst === null ? 1 : konst;
-      push(assemble(-base.coef, base.factors), x => -base.an(x));
-      push(assemble(base.coef, [name + pw(k) + '(' + uS + ')', o.mul + '(' + uS + ')']),
-        x => base.coef * Math.pow(o.FN(un(x)), k) * o.MUL(un(x)));
-      push(assemble(o.SIGN * k * kc, [name + (k > 2 ? pw(k - 1) : '') + '(' + uS + ')', o.mul + '(' + uS + ')'].concat(innerFactor)),
-        x => o.SIGN * k * Math.pow(o.FN(un(x)), Math.max(1, k - 1)) * o.MUL(un(x)) * udn(x));
+  function evalText(txt, xv) {
+    let i = 0;
+    const bad = () => { throw new Error('parse'); };
+    const ws = () => { while (txt[i] === ' ') i++; };
+    function expr() {
+      let v = term();
+      for (;;) {
+        ws();
+        if (txt[i] === '+') { i++; v += term(); }
+        else if (txt[i] === '-') { i++; v -= term(); }
+        else return v;
+      }
     }
+    function term() {
+      let v = unary();
+      for (;;) {
+        ws();
+        if (txt[i] === '·' || txt[i] === '*') { i++; v *= unary(); }
+        else if (txt[i] === '/') { i++; v /= unary(); }
+        else if (/[x(a-z]/.test(txt[i] || '')) { v *= unary(); }   /* 9x, 2(x+1) */
+        else return v;
+      }
+    }
+    function unary() {
+      ws();
+      if (txt[i] === '-') { i++; return -unary(); }
+      let v = atom();
+      ws();
+      if (txt[i] === '^') {
+        i++;
+        if (txt[i] === '(') { i++; const e = expr(); ws(); if (txt[i] !== ')') bad(); i++; v = Math.pow(v, e); }
+        else { let d = ''; while (/[0-9]/.test(txt[i])) { d += txt[i++]; } v = Math.pow(v, +d); }
+      }
+      return v;
+    }
+    function atom() {
+      ws();
+      if (txt[i] === '(') { i++; const v = expr(); ws(); if (txt[i] !== ')') bad(); i++; return v; }
+      if (/[0-9.]/.test(txt[i])) {
+        let d = ''; while (/[0-9.]/.test(txt[i])) d += txt[i++];
+        const v = parseFloat(d);
+        if (!isFinite(v)) bad();
+        return v;
+      }
+      for (let k = 0; k < NAMES.length; k++) {
+        const nm = NAMES[k];
+        if (txt.substr(i, nm.length) !== nm) continue;
+        const save = i;
+        i += nm.length;
+        ws();
+        let pw = 1;
+        if (txt[i] === '^') {                       /* sin³(x) printed as sin^3(x) */
+          i++;
+          if (txt[i] === '(') { i++; pw = expr(); ws(); if (txt[i] !== ')') bad(); i++; }
+          else { let d = ''; while (/[0-9]/.test(txt[i])) d += txt[i++]; pw = +d; }
+          ws();
+        }
+        if (txt[i] !== '(') { i = save; continue; }  /* e.g. "ln 3" is not a call */
+        i++;
+        const a = expr(); ws();
+        if (txt[i] !== ')') bad();
+        i++;
+        const fn = FNMAP[nm];
+        if (!fn) { i = save; continue; }
+        const v = fn(a);
+        return pw === 1 ? v : Math.pow(v, pw);
+      }
+      if (txt.substr(i, 2) === 'ln') { i += 2; ws(); return Math.log(atom()); }
+      if (txt[i] === 'x') { i++; return xv; }
+      bad();
+    }
+    const out = expr();
+    ws();
+    if (i !== txt.length) bad();
     return out;
   }
 
-  /* --------------------------------------------------------------- shuffle */
-  function shuf(a) {
-    const b = a.slice();
-    for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = b[i]; b[i] = b[j]; b[j] = t; }
-    return b;
+  /* does the printed form evaluate to the same number as the tree? */
+  function auditStr(node) {
+    const shown = toPlain(str(node));
+    let tested = 0;
+    for (let k = 0; k < SAMPLES.length; k++) {
+      const xv = SAMPLES[k];
+      const tv = ev(node, xv);
+      if (!isFinite(tv) || Math.abs(tv) > 1e5) continue;
+      let pv;
+      try { pv = evalText(shown, xv); } catch (e) { return { ok: false, why: 'parse: ' + shown }; }
+      if (!isFinite(pv) || Math.abs(pv - tv) > 1e-6 * Math.max(1, Math.abs(tv))) {
+        return { ok: false, why: 'mismatch: ' + shown };
+      }
+      tested++;
+    }
+    return { ok: tested >= 3, why: tested >= 3 ? '' : 'untestable: ' + shown };
   }
 
+  const shuf = a => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = b[i]; b[i] = b[j]; b[j] = t; } return b; };
   function mc(ask, right, wrongs, why) {
     const opts = shuf([right].concat(wrongs.slice(0, 3)));
-    return { ask, opts, a: opts.indexOf(right), why };
+    return { ask: ask, opts: opts, a: opts.indexOf(right), why: why };
   }
 
+  /* --------------------------------------------------------- inner pieces */
+  const x = XX();
+  const INNER = [
+    { t: MUL(N(2), x), c: 1 },                                   /* 2x */
+    { t: x, c: ADD(MUL(N(3), x), N(1)), d: 'linear' },            /* replaced below */
+  ];
+  const ARGS = [
+    { s: '2<i>x</i> + 1', t: ADD(MUL(N(2), x), N(1)) },
+    { s: '3<i>x</i> − 5', t: SUB(MUL(N(3), x), N(5)) },
+    { s: '3<i>x</i>² − 5<i>x</i> + 1', t: ADD(SUB(MUL(N(3), P(x, 2)), MUL(N(5), x)), N(1)) },
+    { s: '<i>x</i>²', t: P(x, 2) },
+    { s: '&radic;<i>x</i>', t: F('sqr', x) },
+    { s: 'sin <i>x</i>', t: F('sin', x) },
+    { s: 'sin 3<i>x</i>', t: F('sin', MUL(N(3), x)) },
+    { s: 'cos 2<i>x</i>', t: F('cos', MUL(N(2), x)) },
+    { s: 'sec <i>x</i>²', t: F('sec', P(x, 2)) },
+    { s: 'tanh(2<i>x</i> + 1)', t: F('tanh', ADD(MUL(N(2), x), N(1))) },
+    { s: 'sinh 3<i>x</i>', t: F('sinh', MUL(N(3), x)) },
+    { s: 'cosh <i>x</i>', t: F('cosh', x) },
+    { s: 'ln 2<i>x</i>', t: F('ln', MUL(N(2), x)) },
+    { s: 'e<sup>2<i>x</i></sup>', t: F('exp', MUL(N(2), x)) },
+    { s: '1/<i>x</i>', t: DIV(N(1), x) },
+    { s: '<i>x</i>³ + <i>x</i>', t: ADD(P(x, 3), x) }
+  ];
+
+  const OUTERS = ['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'sinh', 'cosh', 'tanh', 'coth', 'sech', 'csch'];
   const SHEET = [];
   const seen = Object.create(null);
+  const DBG = [];
+  const dbg = m => { if (DBG.length < 12) DBG.push(m); };
 
-  /* ======================================================= 1. chain rule MC */
-  const COMBOS = [];
-  Object.keys(OUT).forEach(name => {
-    [1, 2, 3, 5].forEach(k => {
-      if (k > 1 && OUT[name].kind === 'self' && k > 3) return;
-      INNER.forEach(u => COMBOS.push([name, k, u]));
-    });
-  });
-
-  shuf(COMBOS).forEach(([name, k, u]) => {
-    if (SHEET.length >= 380) return;
-    const c = compose(name, k, u);
-    if (!verify(c.fn, c.an)) return;
-    const ask = 'Differentiate <i>y</i> = ' + c.fs + '.';
-    if (seen[ask]) return;
-    const cand = variants(name, k, u, c).filter(v => distinct(c.fn, c.an, v.n));
-    if (cand.length < 3) return;
-    const picks = shuf(cand).slice(0, 3);
-    seen[ask] = 1;
-    SHEET.push(mc(ask, c.as, WC(picks),
-      'Chain rule. Outside: <b>' + c.outerDesc + '</b>. Inside: <i>u</i> = ' + u.s + ', so <i>u</i>′ = ' + u.ds +
-      '. Differentiate the outside, keep the inside, multiply by <i>u</i>′ → <b>' + c.as + '</b>.'));
-  });
-
-  /* WC() turns {s,n} pairs into plain option strings, keeping the numbers honest */
-  function WC(list) { return list.map(o => o.s); }
-
-  /* ============================================ 2. the sheet's own five (a–f) */
-  const HAND = [
-    {
-      ask: 'Differentiate <i>y</i> = <i>x</i>² + sin⁴(&radic;<i>x</i>).',
-      right: '2<i>x</i> + 4 sin³(&radic;<i>x</i>) cos(&radic;<i>x</i>) · 1/(2&radic;<i>x</i>)',
-      wrong: ['2<i>x</i> + 4 sin³(&radic;<i>x</i>) cos(&radic;<i>x</i>)',
-              '2<i>x</i> + sin³(&radic;<i>x</i>) cos(&radic;<i>x</i>)',
-              '2<i>x</i> − 4 sin³(&radic;<i>x</i>) cos(&radic;<i>x</i>) · 1/(2&radic;<i>x</i>)'],
-      why: 'Two terms. (1) <i>x</i>² → 2<i>x</i>. (2) sin⁴(&radic;<i>x</i>) is a chain of two: 4 sin³(&radic;<i>x</i>) · cos(&radic;<i>x</i>) · (1/(2&radic;<i>x</i>)). ' +
-           'The classic mistake is to forget the innermost &radic;<i>x</i>, whose derivative is 1/(2&radic;<i>x</i>).'
-    },
-    {
-      ask: 'Differentiate <i>y</i> = cosh(3<i>x</i>) tan³(3<i>x</i>² − 5<i>x</i> + 1).',
-      right: '3 sinh(3<i>x</i>) tan³(3<i>x</i>² − 5<i>x</i> + 1) + cosh(3<i>x</i>) · 3 tan²(3<i>x</i>² − 5<i>x</i> + 1) · sec²(3<i>x</i>² − 5<i>x</i> + 1) · (6<i>x</i> − 5)',
-      wrong: ['3 sinh(3<i>x</i>) tan³(3<i>x</i>² − 5<i>x</i> + 1) + cosh(3<i>x</i>) · 3 tan²(3<i>x</i>² − 5<i>x</i> + 1) · sec²(3<i>x</i>² − 5<i>x</i> + 1)',
-              '3 sinh(3<i>x</i>) tan²(3<i>x</i>² − 5<i>x</i> + 1) + cosh(3<i>x</i>) · 3 tan²(3<i>x</i>² − 5<i>x</i> + 1) · sec²(3<i>x</i>² − 5<i>x</i> + 1) · (6<i>x</i> − 5)',
-              'sinh(3<i>x</i>) tan³(3<i>x</i>² − 5<i>x</i> + 1) + cosh(3<i>x</i>) · 3 tan²(3<i>x</i>² − 5<i>x</i> + 1) · sec²(3<i>x</i>² − 5<i>x</i> + 1) · (6<i>x</i> − 5)'],
-      why: 'Product rule, then the chain rule on each factor. ' +
-           'The first factor cosh(3<i>x</i>) differentiates to 3 sinh(3<i>x</i>); the second, tan³(<i>u</i>) with <i>u</i> = 3<i>x</i>² − 5<i>x</i> + 1, ' +
-           'gives 3 tan²(<i>u</i>) sec²(<i>u</i>) · (6<i>x</i> − 5). Add the two crossed products.'
-    },
-    {
-      ask: 'Differentiate <i>y</i> = &#8731;tanh(2<i>x</i> + 1) / cot(3<i>x</i>).',
-      right: '2 sech²(2<i>x</i> + 1) / (3 &#8731;tanh²(2<i>x</i> + 1)) · cot(3<i>x</i>)+ 3 &#8731;tanh(2<i>x</i> + 1) csc²(3<i>x</i>) / cot²(3<i>x</i>)',
-      wrong: ['sech²(2<i>x</i> + 1) / (3 &#8731;tanh²(2<i>x</i> + 1)) · cot(3<i>x</i>) + 3 &#8731;tanh(2<i>x</i> + 1) csc²(3<i>x</i>) / cot²(3<i>x</i>)',
-              '2 sech²(2<i>x</i> + 1) / (3 &#8731;tanh²(2<i>x</i> + 1)) · cot(3<i>x</i>) − 3 &#8731;tanh(2<i>x</i> + 1) csc²(3<i>x</i>) / cot²(3<i>x</i>)',
-              '2 sech²(2<i>x</i> + 1) · cot(3<i>x</i>) + &#8731;tanh(2<i>x</i> + 1) · 3 csc²(3<i>x</i>)'],
-      why: 'Quotient rule with <i>N</i> = &#8731;tanh(2<i>x</i>+1) and <i>D</i> = cot(3<i>x</i>): ' +
-           '<i>y</i>′ = (<i>N</i>′<i>D</i> − <i>ND</i>′)/<i>D</i>². ' +
-           '<i>N</i> = tanh<sup>1/3</sup> gives <i>N</i>′ = ⅓tanh<sup>−2/3</sup> · sech²(2<i>x</i>+1) · 2, and <i>D</i>′ = −3 csc²(3<i>x</i>). ' +
-           'Two negatives in the quotient rule give the plus sign.'
-    },
-    {
-      ask: 'Differentiate <i>y</i> = sin³<i>x</i> / &radic;cot &radic;<i>x</i>.',
-      right: '(3 sin²<i>x</i> cos <i>x</i>) &radic;cot &radic;<i>x</i> + sin³<i>x</i> · csc²&radic;<i>x</i> / (4 &radic;<i>x</i> &radic;cot³&radic;<i>x</i>) over cot &radic;<i>x</i>',
-      wrong: ['3 sin²<i>x</i> cos <i>x</i> / (csc²&radic;<i>x</i> / (2&radic;<i>x</i>))',
-              '(3 sin²<i>x</i> cos <i>x</i>) &radic;cot &radic;<i>x</i> − sin³<i>x</i> · csc²&radic;<i>x</i> / (4 &radic;<i>x</i> &radic;cot³&radic;<i>x</i>)',
-              '3 sin²<i>x</i> &radic;cot &radic;<i>x</i> + sin³<i>x</i> · csc²&radic;<i>x</i> / (4 &radic;<i>x</i> &radic;cot³&radic;<i>x</i>)'],
-      why: 'Quotient rule twice over plus the chain rule: sin³<i>x</i> → 3 sin²<i>x</i> cos <i>x</i>, and ' +
-           '&radic;cot &radic;<i>x</i> → (1/(2&radic;cot&radic;<i>x</i>)) · (−csc²&radic;<i>x</i>) · (1/(2&radic;<i>x</i>)). The minus from csc² and the minus in the quotient rule cancel.'
-    },
-    {
-      ask: 'Differentiate <i>y</i> = coth⁵(sin³(sec <i>x</i>²)).',
-      right: '−5 coth⁴(sin³(sec <i>x</i>²)) csch²(sin³(sec <i>x</i>²)) · 3 sin²(sec <i>x</i>²) cos(sec <i>x</i>²) · sec <i>x</i>² tan <i>x</i>² · 2<i>x</i>',
-      wrong: ['5 coth⁴(sin³(sec <i>x</i>²)) csch²(sin³(sec <i>x</i>²)) · 3 sin²(sec <i>x</i>²) cos(sec <i>x</i>²) · sec <i>x</i>² tan <i>x</i>² · 2<i>x</i>',
-              '−5 coth⁴(sin³(sec <i>x</i>²)) csch²(sin³(sec <i>x</i>²)) · 3 sin²(sec <i>x</i>²) cos(sec <i>x</i>²)',
-              '−5 coth⁴(sin³(sec <i>x</i>²)) csch²(sin³(sec <i>x</i>²)) · sin²(sec <i>x</i>²) cos(sec <i>x</i>²) · sec <i>x</i>² tan <i>x</i>² · 2<i>x</i>'],
-      why: 'Four layers, peeled from outside in: coth⁵ → 5coth⁴ · (−csch²); sin³ → 3sin²·cos; ' +
-           'sec <i>x</i>² → sec <i>x</i>² tan <i>x</i>² · 2<i>x</i>. Multiply all the layers; the minus comes from coth.'
-    },
-    {
-      ask: 'Differentiate <i>y</i> = log<sub>3</sub>(<i>x</i>² − 1) + e<sup>−<i>x</i></sup>&radic;(ln 2<i>x</i>).',
-      right: '2<i>x</i> / ((<i>x</i>² − 1) ln 3) + &radic;(ln 2<i>x</i>) · (−e<sup>−<i>x</i></sup>) + e<sup>−<i>x</i></sup> · (1/(2<i>x</i>&radic;(ln 2<i>x</i>)))',
-      wrong: ['2<i>x</i> / (<i>x</i>² − 1) + &radic;(ln 2<i>x</i>) · (−e<sup>−<i>x</i></sup>) + e<sup>−<i>x</i></sup> · (1/(2&radic;(ln 2<i>x</i>)))',
-              '1 / ((<i>x</i>² − 1) ln 3) + &radic;(ln 2<i>x</i>) · e<sup>−<i>x</i></sup> + e<sup>−<i>x</i></sup> · (1/(2<i>x</i>&radic;(ln 2<i>x</i>)))',
-              '2<i>x</i> / ((<i>x</i>² − 1) ln 3) − &radic;(ln 2<i>x</i>) · e<sup>−<i>x</i></sup> − e<sup>−<i>x</i></sup> · (1/(2<i>x</i>&radic;(ln 2<i>x</i>)))'],
-      why: 'log<sub>3</sub><i>u</i> differentiates to <i>u</i>′/(<i>u</i> ln 3) — the ln 3 is easy to lose. ' +
-           'The product e<sup>−<i>x</i></sup>&radic;(ln 2<i>x</i>) is the product rule: (−e<sup>−<i>x</i></sup>)&radic;(ln 2<i>x</i>) + e<sup>−<i>x</i></sup> · (1/(2<i>x</i>&radic;(ln 2<i>x</i>))).'
+  /* build one question from an outer function, a power and an inner tree */
+  function makeItem(outer, k, arg) {
+    const fnode = P(F(outer, arg.t), k);
+    const fn = xv => ev(fnode, xv);
+    const right = der(fnode, {});
+    if (!selfConsistent(right)) return null;
+    const ask = 'Differentiate <i>y</i> = ' + str(fnode) + '.';
+    if (seen[ask]) return null;
+    if (!verify(fn, str(right), xv => ev(right, xv))) { dbg('verify ' + str(right)); return null; }
+    const au = auditStr(right);
+    if (!au.ok) {
+      let pv = 'n/a';
+      try { pv = evalText(toPlain(str(right)), 1.25); } catch (e) { pv = 'ERR ' + e.message; }
+      dbg(au.why + ' || tree@1.25=' + ev(right, 1.25) + ' parsed=' + pv);
+      return null;
     }
-  ];
-  HAND.forEach(q => {
-    SHEET.push(mc(q.ask, q.right, q.wrong, q.why));
+
+    const cands = [
+      der(fnode, { noChain: true }),
+      der(fnode, { powerOff: 1 }),
+      der(fnode, { double: true }),
+      neg(right)
+    ].filter(w => str(w) !== str(right)
+         && distinct(xv => ev(right, xv), xv => ev(w, xv))
+         && auditStr(w).ok);
+
+    /* keep the three most useful-looking wrong ones */
+    const wrong = [], seenStr = [str(right)];
+    cands.forEach(w => { const s = str(w); if (seenStr.indexOf(s) < 0 && wrong.length < 3) { seenStr.push(s); wrong.push(s); } });
+    if (wrong.length < 3) return null;
+    seen[ask] = 1;
+    return mc(ask, str(right), wrong,
+      'Chain rule: differentiate the outside (' + str(fnode) + '), then multiply by the derivative of what is inside — ' +
+      '<b>' + str(right) + '</b>.');
+  }
+
+  /* generate, skipping anything that does not survive the checks */
+  const pool = [];
+  OUTERS.forEach(o => [1, 2, 3, 5].forEach(k => ARGS.forEach(a => pool.push([o, k, a]))));
+  shuf(pool).forEach(function (c) {
+    if (SHEET.length >= 380) return;
+    const q = makeItem(c[0], c[1], c[2]);
+    if (q) SHEET.push(q);
   });
 
-  /* ================================================ 3. tangent lines at a point */
-  const TAN = [];
-  const pol = (a, n, b, m, c) => ({
-    s: (a === 1 ? '' : a) + '<i>x</i>' + powSup(n) + (b === 0 ? '' : (b < 0 ? ' − ' + (Math.abs(b) === 1 ? '' : Math.abs(b)) : ' + ' + b) + '<i>x</i>' + (m === 1 ? '' : powSup(m))) + (c > 0 ? ' + ' + c : c < 0 ? ' − ' + Math.abs(c) : ''),
-    f: x => a * Math.pow(x, n) + b * Math.pow(x, m) + c,
-    d: x => a * n * Math.pow(x, n - 1) + b * m * Math.pow(x, m - 1)
-  });
-  const CURVES = [];
-  [4, 3].forEach(n => {
-    [1, 2, 3].forEach(a => {
-      [-2, -3].forEach(b => {
-        [1, 5].forEach(c => {
-          CURVES.push(Object.assign(pol(a, n, b, 2, c), { at: [1, 2, -1, -2, 3, 0] }));
-        });
+  /* ---------------------------------------- the sheet's own six, by the tree */
+  const A = {
+    lin: t => t,
+    e2: F('exp', MUL(N(2), x))
+  };
+  const SHEET_FNS = [
+    { y: ADD(P(x, 2), P(F('sin', F('sqr', x)), 4)),
+      why: 'Two terms: <i>x</i>² gives 2<i>x</i>, and sin⁴(&radic;<i>x</i>) is two layers — the power 4, then sin, then the root.' },
+    { y: MUL(F('cosh', MUL(N(3), x)), P(F('tan', ARGS[2].t), 3)),
+      why: 'Product rule on the two factors, and each factor then needs the chain rule of its own.' },
+    { y: DIV(F('cbr', F('tanh', ADD(MUL(N(2), x), N(1)))), F('cot', MUL(N(3), x))),
+      why: 'Quotient rule with a cube root of tanh on top and cot(3<i>x</i>) underneath — both halves need the chain rule.' },
+    { y: DIV(P(F('sin', x), 3), F('sqr', F('cot', F('sqr', x)))),
+      why: 'Quotient rule: sin³<i>x</i> on top, &radic;cot&radic;<i>x</i> below, and the bottom is itself three layers deep.' },
+    { y: P(F('coth', P(F('sin', F('sec', P(x, 2))), 3)), 5),
+      why: 'Four layers, peeled from the outside in: coth⁵, then sin³, then sec, then <i>x</i>².' },
+    { y: ADD(F('log3', SUB(P(x, 2), N(1))), MUL(F('exp', neg(x)), F('sqr', F('ln', MUL(N(2), x))))),
+      why: 'A sum of two pieces. log<sub>3</sub> brings in ln 3; the product <i>e</i><sup>−<i>x</i></sup>&radic;(ln 2<i>x</i>) needs the product rule.' }
+  ];
+  SHEET_FNS.forEach(def => {
+    const fn = xv => ev(def.y, xv);
+    const right = der(def.y, {});
+    if (!verify(fn, str(right), xv => ev(right, xv)) || !auditStr(right).ok) return;
+    const wrong = [], seenStr = [str(right)];
+    [der(def.y, { noChain: true }), der(def.y, { powerOff: 1 }), der(def.y, { double: true }), neg(right)]
+      .forEach(w => {
+        const s = str(w);
+        if (seenStr.indexOf(s) < 0 && distinct(xv => ev(right, xv), xv => ev(w, xv)) && auditStr(w).ok && wrong.length < 3) { seenStr.push(s); wrong.push(s); }
       });
-    });
+    if (wrong.length < 3) return;
+    SHEET.unshift(mc('Differentiate <i>y</i> = ' + str(def.y) + '  <span class="qp-src">(Sheet 5)</span>', str(right), wrong, def.why));
   });
-  CURVES.push.apply(CURVES, [
-    { s: '<i>x</i>⁴ − 3<i>x</i>² + 5', f: x => Math.pow(x, 4) - 3 * x * x + 5, d: x => 4 * Math.pow(x, 3) - 6 * x, at: [1, 2, -1, 0, -2, 3] },
-    { s: '<i>x</i>³ − 2<i>x</i>', f: x => x * x * x - 2 * x, d: x => 3 * x * x - 2, at: [1, 2, -1, 0, 3] },
-    { s: '<i>x</i>² + 3<i>x</i> − 1', f: x => x * x + 3 * x - 1, d: x => 2 * x + 3, at: [1, 2, -1, 0, -3, 4] },
-    { s: '2<i>x</i>³ + <i>x</i>', f: x => 2 * x * x * x + x, d: x => 6 * x * x + 1, at: [1, -1, 2, 0] },
-    { s: '<i>x</i>⁵ − <i>x</i>', f: x => Math.pow(x, 5) - x, d: x => 5 * Math.pow(x, 4) - 1, at: [1, -1, 0, 2] },
-    { s: '<i>x</i>³ + 3<i>x</i>² − 9<i>x</i>', f: x => x * x * x + 3 * x * x - 9 * x, d: x => 3 * x * x + 6 * x - 9, at: [1, -1, 2, 0, 3] },
-    { s: '1/<i>x</i>', f: x => 1 / x, d: x => -1 / (x * x), at: [1, 2, -1, 0.5] },
-    { s: '&radic;<i>x</i>', f: x => Math.sqrt(x), d: x => 1 / (2 * Math.sqrt(x)), at: [1, 4, 9] },
-    { s: 'ln <i>x</i>', f: x => Math.log(x), d: x => 1 / x, at: [1] },
-    { s: 'e<sup><i>x</i></sup>', f: x => Math.exp(x), d: x => Math.exp(x), at: [0, 1] },
-    { s: '<i>x</i>² ln <i>x</i>', f: x => x * x * Math.log(x), d: x => 2 * x * Math.log(x) + x, at: [1] },
-    { s: '<i>x</i>e<sup><i>x</i></sup>', f: x => x * Math.exp(x), d: x => Math.exp(x) * (1 + x), at: [0, 1] },
-    { s: 'sinh <i>x</i>', f: x => Math.sinh(x), d: x => Math.cosh(x), at: [0] },
-    { s: 'cosh <i>x</i>', f: x => Math.cosh(x), d: x => Math.sinh(x), at: [0] },
-    { s: 'tanh <i>x</i>', f: x => Math.tanh(x), d: x => 1 / Math.pow(Math.cosh(x), 2), at: [0] }
-  ]);
+
+  /* ------------------------------------------------------- tangent lines */
+  const TAN = [];
+  const CURVES = [];
+  const powSup = n => sup(n);
+  const pol = (a, n, b, m, c) => ({
+    node: ADD(SUB(MUL(N(a), P(x, n)), MUL(N(b), P(x, m))), N(c)),
+    at: [0, 1, 2, -1, -2, 3]
+  });
+  [4, 3].forEach(n => [1, 2, 3].forEach(a => [2, 3].forEach(b => [1, 5].forEach(c => CURVES.push(pol(a, n, b, 2, c))))));
+  CURVES.push(
+    { node: ADD(SUB(P(x, 4), MUL(N(3), P(x, 2))), N(5)), at: [1, 2, -1, 0, -2, 3] },
+    { node: SUB(P(x, 3), MUL(N(2), x)), at: [1, 2, -1, 0, 3] },
+    { node: ADD(ADD(P(x, 2), MUL(N(3), x)), N(-1)), at: [1, 2, -1, 0, -3, 4] },
+    { node: ADD(MUL(N(2), P(x, 3)), x), at: [1, -1, 2, 0] },
+    { node: SUB(P(x, 5), x), at: [1, -1, 0, 2] },
+    { node: ADD(SUB(P(x, 3), MUL(N(9), x)), MUL(N(3), P(x, 2))), at: [1, -1, 2, 0, 3] },
+    { node: DIV(N(1), x), at: [1, 2, -1, 0.5] },
+    { node: F('sqr', x), at: [1, 4, 9] },
+    { node: F('ln', x), at: [1] },
+    { node: F('exp', x), at: [0, 1] },
+    { node: MUL(P(x, 2), F('ln', x)), at: [1] },
+    { node: MUL(x, F('exp', x)), at: [0, 1] },
+    { node: F('sinh', x), at: [0] },
+    { node: F('cosh', x), at: [0] },
+    { node: F('tanh', x), at: [0] },
+    { node: MUL(F('cosh', MUL(N(3), x)), P(F('tan', ARGS[2].t), 3)), at: [0] }
+  );
 
   const nz = v => Math.abs(v) < 1e-12 ? 0 : v;
-  const clean = v => Math.abs(v - Math.round(v * 100) / 100) < 1e-10 && Math.abs(v) < 400;
+  const cleanNum = v => Math.abs(v - Math.round(v * 100) / 100) < 1e-10 && Math.abs(v) < 400;
   function lineStr(m, b) {
     m = nz(m); b = nz(b);
-    let s = 'y = ';
-    if (m === 0) return s + num(b);
-    s += (m === 1 ? '' : m === -1 ? '−' : num(m)) + '<i>x</i>';
+    if (m === 0) return 'y = ' + num(b);
+    let s = 'y = ' + (m === 1 ? '' : m === -1 ? '−' : num(m)) + '<i>x</i>';
     if (b > 0) s += ' + ' + num(b);
     else if (b < 0) s += ' − ' + num(Math.abs(b));
     return s;
   }
 
   CURVES.forEach(cv => {
+    const f = xv => ev(cv.node, xv);
+    const d = xv => ev(der(cv.node, {}), xv);
     cv.at.forEach(a => {
-      const y0 = nz(cv.f(a)), m = nz(cv.d(a));
-      const b = nz(y0 - m * a);
-      if (!clean(y0) || !clean(m) || !clean(b)) return;
-      const right = lineStr(m, b);
-      const wrong = [];
-      const cands = [
-        lineStr(y0, nz(y0 - y0 * a)),          /* used f(a) as the slope */
-        lineStr(-m, nz(y0 + m * a)),           /* sign slip */
-        lineStr(m, y0),                        /* forgot to shift by a */
-        lineStr(m * a, b)                      /* multiplied instead of subtracted */
-      ];
-      cands.forEach(s => { if (s !== right && wrong.indexOf(s) < 0 && wrong.length < 3) wrong.push(s); });
+      const y0 = nz(f(a)), m = nz(d(a)), b = nz(y0 - m * a);
+      if (!cleanNum(y0) || !cleanNum(m) || !cleanNum(b)) return;
+      const right = lineStr(m, b), wrong = [];
+      [lineStr(y0, nz(y0 - y0 * a)), lineStr(-m, nz(y0 + m * a)), lineStr(m, y0), lineStr(m * a, b)]
+        .forEach(s => { if (s !== right && wrong.indexOf(s) < 0 && wrong.length < 3) wrong.push(s); });
       if (wrong.length < 3) return;
-      TAN.push(mc('Find the equation of the tangent line to <i>y</i> = ' + cv.s + ' at <i>x</i> = ' + num(a) + '.',
+      TAN.push(mc('Find the equation of the tangent line to <i>y</i> = ' + str(cv.node) + ' at <i>x</i> = ' + num(a) + '.',
         right, wrong,
-        'At <i>x</i> = ' + num(a) + ': the height is <i>y</i> = ' + num(y0) + ' and the slope is <i>y</i>′ = ' + num(m) +
-        '. With y − y₀ = m(x − x₀): <b>' + right + '</b>.'));
+        'At <i>x</i> = ' + num(a) + ': the height is <b>' + num(y0) + '</b> and the slope is <b>' + num(m) +
+        '</b>. With <i>y</i> − <i>y</i>₀ = <i>m</i>(<i>x</i> − <i>x</i>₀): <b>' + right + '</b>.'));
     });
   });
 
-  /* the sheet's own three, worked exactly */
-  TAN.push(mc('Find the equation of the tangent line to <i>y</i> = <i>x</i>⁴ − 3<i>x</i>² + 5 at <i>x</i> = 1.',
-    'y = −2<i>x</i> + 5', ['y = 3<i>x</i> − 3', 'y = 2<i>x</i> + 3', 'y = −2<i>x</i> + 3'],
-    'Sheet 5, 2(i). <i>y</i>′(<i>x</i>) = 4<i>x</i>³ − 6<i>x</i>, so the slope at 1 is −2. The point is (1, 3). ' +
-    'y − 3 = −2(x − 1) → y = −2x + 5.'));
-  TAN.push(mc('Find the equation of the tangent line to <i>y</i> = sin 2<i>x</i> + cos 4<i>x</i> at <i>x</i> = &pi;/4.',
-    'y = 0', ['y = <i>x</i> − &pi;/4', 'y = −4<i>x</i> + &pi;', 'y = 1'],
-    'Sheet 5, 2(ii). <i>y</i>′ = 2 cos 2<i>x</i> − 4 sin 4<i>x</i>. At &pi;/4: cos(&pi;/2) = 0 and sin &pi; = 0, so the slope is 0. ' +
-    'The point is (&pi;/4, sin(&pi;/2) + cos &pi;) = (&pi;/4, 0). A flat tangent on the axis: <b>y = 0</b>.'));
-  TAN.push(mc('Find the equation of the tangent line to <i>y</i> = (<i>x</i> + 1) cosh²(3<i>x</i>) at <i>x</i> = 0.',
-    'y = <i>x</i> + 1', ['y = 1', 'y = 7<i>x</i> + 1', 'y = <i>x</i> + 2'],
-    'Sheet 5, 2(iii). Product rule: <i>y</i>′ = cosh²(3<i>x</i>) + (<i>x</i> + 1) · 2 cosh(3<i>x</i>) sinh(3<i>x</i>) · 3. ' +
-    'At 0: 1 + 1·0 = 1, and the point is (0, 1) → y = x + 1.'));
+  /* the sheet's three tangent questions, computed not typed */
+  [
+    { node: ADD(SUB(P(x, 4), MUL(N(3), P(x, 2))), N(5)), a: 1, tag: 'Sheet 5, 2(i)' },
+    { node: ADD(F('sin', MUL(N(2), x)), F('cos', MUL(N(4), x))), a: Math.PI / 4, tag: 'Sheet 5, 2(ii)', pi: true },
+    { node: MUL(ADD(x, N(1)), P(F('cosh', MUL(N(3), x)), 2)), a: 0, tag: 'Sheet 5, 2(iii)' }
+  ].forEach(sv => {
+    const f = xv => ev(sv.node, xv);
+    const y0 = nz(Math.round(f(sv.a) * 1e10) / 1e10);
+    const m = nz(Math.round((f(sv.a + 1e-6) - f(sv.a - 1e-6)) / 2e-6 * 1e6) / 1e6);
+    const b = nz(y0 - m * sv.a);
+    const atTxt = sv.pi ? '&pi;/4' : num(sv.a);
+    TAN.push(mc('Find the equation of the tangent line to <i>y</i> = ' + str(sv.node) + ' at <i>x</i> = ' + atTxt +
+      '  <span class="qp-src">(' + sv.tag + ')</span>',
+      lineStr(m, b),
+      [lineStr(-m, y0 + m * sv.a), lineStr(y0, y0 - y0 * sv.a), lineStr(m === 0 ? 1 : m, b + 2)],
+      'At <i>x</i> = ' + atTxt + ' the height is ' + num(y0) + ' and the slope is ' + num(m) + ', so ' + lineStr(m, b) + '.'));
+  });
 
+  /* a self-test anyone can run: the rules against finite differences */
+  window.SHEET_SELFTEST = function () {
+    const bad = [];
+    const tryOne = (name, arg, k) => {
+      const node = P(F(name, arg), k);
+      const d = der(node, {});
+      for (let i = 0; i < SAMPLES.length; i++) {
+        const xv = SAMPLES[i];
+        const num1 = ev(node, xv), num2 = ev(d, xv), fd = central(xv2 => ev(node, xv2), xv);
+        if (!isFinite(num2) || !isFinite(fd) || Math.abs(num1) > 1e5 || Math.abs(fd) > 1e5) continue;
+        if (Math.abs(num2 - fd) > 1e-4 * Math.max(1, Math.abs(fd))) { bad.push(name + '^' + k + '(' + str(arg) + ') at ' + xv); break; }
+      }
+    };
+    Object.keys(FN).forEach(name => [1, 2, 3].forEach(k => ARGS.forEach(a => tryOne(name, a.t, k))));
+    return { checked: Object.keys(FN).length * 3 * ARGS.length, failures: bad.slice(0, 10), fails: bad.length };
+  };
+
+  window.SHEET_AUDIT = function () {
+    const bad = [];
+    let checked = 0;
+    SHEET.concat(TAN).forEach(q => {
+      if (!q.opts) return;
+      q.opts.forEach(o => {
+        checked++;
+        const shown = toPlain(o).replace(/^y = /, '');
+        let okp = true;
+        try { evalText(shown, 1.1); evalText(shown, 0.6); } catch (e) { okp = false; }
+        if (!okp) bad.push(shown);
+      });
+    });
+    return { options: checked, unparsable: bad.length, sample: bad.slice(0, 6) };
+  };
+
+  window.__evalText = evalText;
+  window.__probe = { N: N, MUL: MUL, neg: neg, F: F, P: P, DIV: DIV, SUB: SUB, ADD: ADD, str: str, ev: ev, X: XX, der: der };
+  window.SHEET_DEBUG = DBG;
   window.SHEET_BANK = { sheet: SHEET, tan: TAN };
   window.SHEET_STATS = { sheet: SHEET.length, tan: TAN.length };
 })();
@@ -4179,5 +4569,5 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 else qpBoot();
 
 </script>
-<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a556d20d8debe191',t:'MTc5MzgyODg4MQ=='};var l=window.parent.location,o;try{o=new URL(l.origin).origin}catch(e){try{o=new URL(new URL(l.href).origin).origin}catch(e){o=''}}var u='/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=a556d20d8debe191',a=document.createElement('script');a.src=o?new URL(u,o).href:u;document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a556fa8b78476dcc',t:'MTc5MzgzMDU0MA=='};var l=window.parent.location,o;try{o=new URL(l.origin).origin}catch(e){try{o=new URL(new URL(l.href).origin).origin}catch(e){o=''}}var u='/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=a556fa8b78476dcc',a=document.createElement('script');a.src=o?new URL(u,o).href:u;document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
